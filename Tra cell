@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cell ID Tracker</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      display: flex; justify-content: center;
+      background: #f0f2f5;
+    }
+    .container {
+      width: 95%; max-width: 750px;
+      background: #fff;
+      margin: 15px; padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    h2, h3 { margin-top: 10px; }
+    textarea, input {
+      width: 100%; padding: 12px;
+      margin: 6px 0;
+      border: 1px solid #ccc; border-radius: 6px;
+      font-size: 15px;
+    }
+    .button-group { display: flex; flex-wrap: wrap; }
+    button {
+      margin: 6px 6px 6px 0;
+      padding: 10px 16px;
+      font-size: 15px;
+      border: none; border-radius: 8px;
+      background: #007bff; color: white;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    button:hover { background: #0056b3; }
+    .btn-danger { background: #dc3545; }
+    .btn-danger:hover { background: #a71d2a; }
+    .btn-success { background: #28a745; }
+    .btn-success:hover { background: #1c7d32; }
+    .result {
+      border: 1px solid #ddd;
+      padding: 12px;
+      margin-top: 10px;
+      border-radius: 8px;
+      background: #fafafa;
+      font-size: 14px;
+    }
+    @media (max-width: 480px) {
+      button { width: 100%; margin-top: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Cell ID Tracker</h2>
+
+    <h3>API Key</h3>
+    <input type="text" id="apiKeyInput" placeholder="Nhập API key">
+    <div class="button-group">
+      <button onclick="saveApiKey()">Lưu API</button>
+      <button class="btn-danger" onclick="deleteApiKey()">Xóa API</button>
+    </div>
+
+    <h3>Nhập Cell (mnc.lac.cellid, mỗi dòng 1 cell)</h3>
+    <textarea id="cellInput" rows="6" placeholder="Ví dụ:\n4.12345.67890\n1.23456.78901"></textarea>
+    <div class="button-group">
+      <button onclick="lookupCells()">Tra Cell</button>
+      <button class="btn-danger" onclick="clearAll()">Xóa Kết Quả</button>
+      <button class="btn-success" onclick="exportExcel()">Xuất Excel</button>
+      <button class="btn-success" onclick="openAllOnMap()">Mở tất cả trên bản đồ</button>
+    </div>
+
+    <h3>Kết quả</h3>
+    <div id="results"></div>
+  </div>
+
+<script>
+const apiUrl = "https://us1.unwiredlabs.com/v2/process.php";
+const mcc = 452; // MCC Việt Nam
+let historyData = []; // Lưu kết quả để export
+
+// Lưu API key
+function saveApiKey() {
+  const key = document.getElementById("apiKeyInput").value.trim();
+  if (key) {
+    localStorage.setItem("apiKey", key);
+    alert("Đã lưu API key!");
+  }
+}
+
+// Xóa API key
+function deleteApiKey() {
+  localStorage.removeItem("apiKey");
+  document.getElementById("apiKeyInput").value = "";
+  alert("Đã xóa API key!");
+}
+
+// Tra cell
+async function lookupCells() {
+  const key = localStorage.getItem("apiKey");
+  if (!key) {
+    alert("Chưa có API key! Vui lòng nhập và lưu trước.");
+    return;
+  }
+
+  const input = document.getElementById("cellInput").value.trim();
+  if (!input) {
+    alert("Chưa nhập cell!");
+    return;
+  }
+
+  const cells = input.split("\n").map(line => line.trim()).filter(l => l);
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = "";
+  historyData = []; // reset dữ liệu cũ
+
+  for (let cell of cells) {
+    const [mnc, lac, cid] = cell.split(".");
+    const techOrder = ["umts", "lte", "nbiot", "nr"];
+    let found = false;
+
+    for (let radio of techOrder) {
+      const payload = {
+        token: key,
+        radio: radio,
+        mcc: mcc,
+        mnc: parseInt(mnc),
+        cells: [{ lac: parseInt(lac), cid: parseInt(cid) }],
+        address: 1
+      };
+
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        if (data.status === "ok") {
+          found = true;
+          const now = new Date().toLocaleString();
+          const lat = data.lat;
+          const lon = data.lon;
+          const accuracy = data.accuracy || "Không có";
+          const address = data.address || "Không rõ";
+          const mapUrl = `https://www.google.com/maps?q=${lat},${lon}`;
+
+          // Lưu vào lịch sử
+          historyData.push({ cell, now, lat, lon, radio: radio.toUpperCase(), accuracy, address });
+
+          resultsDiv.innerHTML += `
+            <div class="result">
+              <b>Cell:</b> ${cell}<br>
+              <b>Ngày giờ tra:</b> ${now}<br>
+              <b>Vĩ độ, Kinh độ:</b> ${lat}, ${lon}<br>
+              <b>Mạng tra:</b> ${radio.toUpperCase()}<br>
+              <b>Khoảng cách (m):</b> ${accuracy}<br>
+              <b>Địa chỉ:</b> ${address}<br>
+              <button onclick="window.open('${mapUrl}', '_blank')">Mở Bản Đồ</button>
+            </div>
+          `;
+          break;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (!found) {
+      resultsDiv.innerHTML += `<div class="result"><b>Cell:</b> ${cell} → Không tìm thấy!</div>`;
+    }
+  }
+}
+
+// Xóa input + kết quả
+function clearAll() {
+  document.getElementById("cellInput").value = "";
+  document.getElementById("results").innerHTML = "";
+  historyData = [];
+}
+
+// Xuất file Excel XML
+function exportExcel() {
+  if (historyData.length === 0) {
+    alert("Chưa có dữ liệu để xuất!");
+    return;
+  }
+  let xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
+  <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+    xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:x="urn:schemas-microsoft-com:office:excel"
+    xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+    <Worksheet ss:Name="Cells">
+      <Table>
+        <Row>
+          <Cell><Data ss:Type="String">Cell</Data></Cell>
+          <Cell><Data ss:Type="String">Ngày giờ tra</Data></Cell>
+          <Cell><Data ss:Type="String">Vĩ độ</Data></Cell>
+          <Cell><Data ss:Type="String">Kinh độ</Data></Cell>
+          <Cell><Data ss:Type="String">Mạng tra</Data></Cell>
+          <Cell><Data ss:Type="String">Khoảng cách</Data></Cell>
+          <Cell><Data ss:Type="String">Địa chỉ</Data></Cell>
+        </Row>`;
+  historyData.forEach(r => {
+    xml += `<Row>
+      <Cell><Data ss:Type="String">${r.cell}</Data></Cell>
+      <Cell><Data ss:Type="String">${r.now}</Data></Cell>
+      <Cell><Data ss:Type="Number">${r.lat}</Data></Cell>
+      <Cell><Data ss:Type="Number">${r.lon}</Data></Cell>
+      <Cell><Data ss:Type="String">${r.radio}</Data></Cell>
+      <Cell><Data ss:Type="String">${r.accuracy}</Data></Cell>
+      <Cell><Data ss:Type="String">${r.address}</Data></Cell>
+    </Row>`;
+  });
+  xml += `</Table></Worksheet></Workbook>`;
+
+  const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "cell_tracker_results.xml";
+  link.click();
+}
+
+// Mở tất cả cell trên Google Maps với nhiều pin
+function openAllOnMap() {
+  if (historyData.length === 0) {
+    alert("Chưa có dữ liệu!");
+    return;
+  }
+  let url = "https://www.google.com/maps/dir/";
+  historyData.forEach(r => {
+    url += `${r.lat},${r.lon}/`;
+  });
+  window.open(url, "_blank");
+}
+</script>
+</body>
+</html>
